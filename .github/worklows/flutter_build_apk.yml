@@ -1,17 +1,17 @@
-name: Build Flutter APK (zip path OR url)
+name: Build Flutter APK Auto
 
 on:
   workflow_dispatch:
     inputs:
       job_id:
-        description: "ID job dari Telegram"
-        required: true
-      zip_path:
-        description: "Path zip di repo (mis: uploads/xxx.zip). Kosongkan jika pakai zip_url"
+        description: "ID dari bot (opsional)"
         required: false
         default: ""
       zip_url:
-        description: "Direct URL zip. Kosongkan jika pakai zip_path"
+        description: "Link zip project"
+        required: true
+      zip_path:
+        description: "Path zip di repo (opsional)"
         required: false
         default: ""
 
@@ -20,6 +20,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Generate Job ID (fallback)
+        id: job
+        run: |
+          if [ -z "${{ inputs.job_id }}" ]; then
+            echo "job_id=$(date +%s)" >> $GITHUB_OUTPUT
+          else
+            echo "job_id=${{ inputs.job_id }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout repo
         uses: actions/checkout@v4
 
@@ -33,42 +42,41 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
 
-      - name: Prepare workspace
+      - name: Prepare Project
         run: |
           set -e
-          mkdir -p work
+          mkdir work
           cd work
 
           if [ -n "${{ inputs.zip_url }}" ]; then
-            echo "MODE: zip_url"
-            curl -L --fail --retry 3 --retry-delay 2 "${{ inputs.zip_url }}" -o project.zip
+            echo "Download dari link..."
+            curl -L --fail "${{ inputs.zip_url }}" -o project.zip
           elif [ -n "${{ inputs.zip_path }}" ]; then
-            echo "MODE: zip_path"
+            echo "Ambil dari repo..."
             cp "../${{ inputs.zip_path }}" project.zip
           else
-            echo "ERROR: zip_url atau zip_path wajib diisi."
+            echo "ERROR: zip wajib diisi!"
             exit 1
           fi
 
-          unzip -q project.zip -d project
+          unzip project.zip -d project
 
-      - name: Flutter pub get
+      - name: Install dependencies
         working-directory: work/project
         run: flutter pub get
 
-      - name: Build APK (release)
+      - name: Build APK
         working-directory: work/project
         run: flutter build apk --release
 
-      - name: Collect outputs
+      - name: Rename APK
         run: |
-          mkdir -p out
-          cp work/project/build/app/outputs/flutter-apk/app-release.apk "out/app-release-${{ inputs.job_id }}.apk"
+          mkdir out
+          cp work/project/build/app/outputs/flutter-apk/app-release.apk out/app-${{ steps.job.outputs.job_id }}.apk
 
-      - name: Upload artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ inputs.job_id }}
+          name: apk-${{ steps.job.outputs.job_id }}
           path: out/*.apk
