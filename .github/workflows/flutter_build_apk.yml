@@ -1,0 +1,59 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job ID"
+        required: true
+      zip_url:
+        description: "URL ZIP project"
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Download Project
+        run: |
+          mkdir project
+          cd project
+          curl -L ${{ github.event.inputs.zip_url }} -o app.zip
+          unzip app.zip
+          ls
+
+      - name: Find pubspec.yaml
+        run: |
+          cd project
+          if [ ! -f pubspec.yaml ]; then
+            DIR=$(find . -name pubspec.yaml | head -n 1 | xargs dirname)
+            cd "$DIR"
+          fi
+          echo "DIR=$(pwd)" >> $GITHUB_ENV
+
+      - name: Build APK
+        run: |
+          cd $DIR
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.event.inputs.job_id }}
+          path: $DIR/build/app/outputs/flutter-apk/app-release.apk
