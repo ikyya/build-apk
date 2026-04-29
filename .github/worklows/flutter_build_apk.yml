@@ -1,17 +1,14 @@
-name: Build Flutter APK Auto
+name: Build Flutter APK (auto detect)
 
 on:
   workflow_dispatch:
     inputs:
       job_id:
-        description: "ID dari bot (opsional)"
+        required: true
+      zip_path:
         required: false
         default: ""
       zip_url:
-        description: "Link zip project"
-        required: true
-      zip_path:
-        description: "Path zip di repo (opsional)"
         required: false
         default: ""
 
@@ -20,63 +17,85 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Generate Job ID (fallback)
-        id: job
-        run: |
-          if [ -z "${{ inputs.job_id }}" ]; then
-            echo "job_id=$(date +%s)" >> $GITHUB_OUTPUT
-          else
-            echo "job_id=${{ inputs.job_id }}" >> $GITHUB_OUTPUT
-          fi
+      - uses: actions/checkout@v4
 
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
 
-      - name: Prepare Project
+      - name: Prepare & Extract
         run: |
           set -e
-          mkdir work
+          mkdir -p work
           cd work
 
           if [ -n "${{ inputs.zip_url }}" ]; then
-            echo "Download dari link..."
+            echo "MODE: zip_url"
             curl -L --fail "${{ inputs.zip_url }}" -o project.zip
           elif [ -n "${{ inputs.zip_path }}" ]; then
-            echo "Ambil dari repo..."
+            echo "MODE: zip_path"
             cp "../${{ inputs.zip_path }}" project.zip
           else
-            echo "ERROR: zip wajib diisi!"
+            echo "ZIP TIDAK ADA"
             exit 1
           fi
 
-          unzip project.zip -d project
+          unzip -q project.zip -d project
+          cd project
 
-      - name: Install dependencies
-        working-directory: work/project
+          echo "🔍 Cari pubspec.yaml..."
+
+          if [ ! -f pubspec.yaml ]; then
+            FOUND=$(find . -name pubspec.yaml | head -n 1)
+            if [ -z "$FOUND" ]; then
+              echo "❌ BUKAN PROJECT FLUTTER"
+              exit 1
+            fi
+            DIR=$(dirname "$FOUND")
+            echo "📂 Masuk ke: $DIR"
+            cd "$DIR"
+          fi
+
+          echo "📦 Struktur:"
+          ls -la
+
+      - name: Fix Project (auto)
+        run: |
+          flutter doctor
+          flutter clean
+
+          # kalau android belum ada → generate
+          if [ ! -d "android" ]; then
+            echo "⚠️ Android folder missing, generating..."
+            flutter create .
+          fi
+
+      - name: Install Dependencies
         run: flutter pub get
 
       - name: Build APK
-        working-directory: work/project
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
-      - name: Rename APK
+      - name: Collect APK
         run: |
-          mkdir out
-          cp work/project/build/app/outputs/flutter-apk/app-release.apk out/app-${{ steps.job.outputs.job_id }}.apk
+          mkdir -p out
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+          APK=$(find . -name "app-release.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "❌ APK NOT FOUND"
+            exit 1
+          fi
+
+          cp "$APK" "out/app-${{ inputs.job_id }}.apk"
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ steps.job.outputs.job_id }}
+          name: apk-${{ inputs.job_id }}
           path: out/*.apk
